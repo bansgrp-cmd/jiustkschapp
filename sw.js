@@ -1,6 +1,6 @@
 // Offline helper for the installed app. Keeps the app screens on the phone so it opens fast.
 // Data always comes live from Google (never cached here).
-var CACHE = 'sb-202611080926';
+var CACHE = 'sb-202611090929';
 var SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 self.addEventListener('install', function (e) { e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); })); });
 self.addEventListener('activate', function (e) {

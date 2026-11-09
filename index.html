@@ -354,7 +354,7 @@ table.tbl{border-collapse:collapse;width:100%;min-width:720px}
 </head>
 <body>
 <div id="app"></div><div id="toasts" aria-live="polite"></div><div id="busy" class="busy" hidden></div>
-<script>window.SB_API_URL = "https://script.google.com/macros/s/AKfycbwzpYsTJE1Xx4F7PulMQ8l6-ECZfTVA6NY9gnfzXg1PF06-rxya8jwH_Kx8XEfqk1T2Eg/exec"; window.SB_VERSION = "202611080926";</script>
+<script>window.SB_API_URL = "https://script.google.com/macros/s/AKfycbwzpYsTJE1Xx4F7PulMQ8l6-ECZfTVA6NY9gnfzXg1PF06-rxya8jwH_Kx8XEfqk1T2Eg/exec"; window.SB_VERSION = "202611090929";</script>
 <script>
 // ===== ShiftBoard shared helpers (used by server AND browser) =====
 var H = (function () {
@@ -503,10 +503,41 @@ var H = (function () {
     return out;
   }
 
+  // SHA-256 + HMAC (hex), same result in the browser and on the server — used for the changing store QR code
+  function sha256Bytes(bytes) {
+    var K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+    var h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    var m = bytes.slice(), l = bytes.length * 8; m.push(0x80); while (m.length % 64 !== 56) m.push(0);
+    for (var i = 7; i >= 0; i--) m.push(i >= 4 ? 0 : (l >>> (i * 8)) & 255);
+    var w = new Array(64);
+    for (var o = 0; o < m.length; o += 64) {
+      for (var t = 0; t < 16; t++) w[t] = (m[o + t * 4] << 24) | (m[o + t * 4 + 1] << 16) | (m[o + t * 4 + 2] << 8) | m[o + t * 4 + 3];
+      for (t = 16; t < 64; t++) { var x = w[t - 15], y = w[t - 2]; w[t] = (w[t - 16] + ((x >>> 7 | x << 25) ^ (x >>> 18 | x << 14) ^ (x >>> 3)) + w[t - 7] + ((y >>> 17 | y << 15) ^ (y >>> 19 | y << 13) ^ (y >>> 10))) | 0; }
+      var a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], k = h[7];
+      for (t = 0; t < 64; t++) {
+        var t1 = (k + ((e >>> 6 | e << 26) ^ (e >>> 11 | e << 21) ^ (e >>> 25 | e << 7)) + ((e & f) ^ (~e & g)) + K[t] + w[t]) | 0;
+        var t2 = (((a >>> 2 | a << 30) ^ (a >>> 13 | a << 19) ^ (a >>> 22 | a << 10)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+        k = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      h[0] = (h[0] + a) | 0; h[1] = (h[1] + b) | 0; h[2] = (h[2] + c) | 0; h[3] = (h[3] + d) | 0; h[4] = (h[4] + e) | 0; h[5] = (h[5] + f) | 0; h[6] = (h[6] + g) | 0; h[7] = (h[7] + k) | 0;
+    }
+    var out = []; h.forEach(function (v) { out.push((v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255); }); return out;
+  }
+  function utf8(s) { s = unescape(encodeURIComponent(String(s))); var b = []; for (var i = 0; i < s.length; i++) b.push(s.charCodeAt(i)); return b; }
+  function hex(b) { return b.map(function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join(''); }
+  function sha256(s) { return hex(sha256Bytes(utf8(s))); }
+  function hmac(key, msg) {
+    var k = utf8(key); if (k.length > 64) k = sha256Bytes(k); while (k.length < 64) k.push(0);
+    var ip = k.map(function (x) { return x ^ 0x36; }), op = k.map(function (x) { return x ^ 0x5c; });
+    return hex(sha256Bytes(op.concat(sha256Bytes(ip.concat(utf8(msg))))));
+  }
+  function geoDist(a1, o1, a2, o2) { var r = Math.PI / 180, dA = (a2 - a1) * r, dO = (o2 - o1) * r, x = Math.sin(dA / 2) * Math.sin(dA / 2) + Math.cos(a1 * r) * Math.cos(a2 * r) * Math.sin(dO / 2) * Math.sin(dO / 2); return Math.round(2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(x)))); }
+  function fmtDist(m) { m = +m || 0; var ft = m * 3.281; return ft < 1000 ? Math.round(ft / 10) * 10 + ' ft' : (m / 1609.34).toFixed(m < 16000 ? 1 : 0) + ' mi'; }
+
   return { pad: pad, tmin: tmin, mtime: mtime, durMin: durMin, shiftHours: shiftHours, parseD: parseD, fmtD: fmtD, addDays: addDays, dow: dow,
     weekStartOf: weekStartOf, daysBetween: daysBetween, weekDates: weekDates, isDate: isDate, isTime: isTime, DOW: DOW, DOWL: DOWL, MON: MON,
     fmt12: fmt12, range12: range12, prettyD: prettyD, abs: abs, absStr: absStr, shiftRange: shiftRange, overlaps: overlaps, timeOffRange: timeOffRange,
-    money: money, hrs: hrs, labor: labor, warnings: warnings, RULESETS: RULESETS, addMonths: addMonths };
+    money: money, hrs: hrs, labor: labor, warnings: warnings, RULESETS: RULESETS, addMonths: addMonths, sha256: sha256, hmac: hmac, geoDist: geoDist, fmtDist: fmtDist };
 })();
 
 // ===== ShiftBoard app (browser) =====
@@ -928,7 +959,7 @@ function weekGridHtml(m) {
   h += '<div class="corner"><div class="small muted" style="font-weight:600">' + esc(w.store.name) + '</div><div class="small faint">' + w.employees.length + ' people</div></div>';
   dates.forEach(function (d) {
     var cnt = (m.labor.days[d] || {}).count || 0;
-    h += '<div class="gh' + (d === t0 ? ' today' : '') + '"><div class="d1">' + H.DOW[H.dow(d)] + (S.me.perms.schedule ? '<button class="menu-btn" data-daymenu="' + d + '" aria-label="Day options">⋯</button>' : '') + '</div><div class="d2"><span>' + H.prettyD(d) + '</span><span class="small" title="People working">👤 ' + cnt + '</span></div></div>';
+    h += '<div class="gh' + (d === t0 ? ' today' : '') + '"><div class="d1">' + H.DOW[H.dow(d)] + (S.me.perms.schedule ? '<button class="menu-btn" data-daymenu="' + d + '" aria-label="Day options">⋯</button>' : '') + '</div><div class="d2"><span>' + H.prettyD(d) + '</span><span class="small" title="People working">👤 ' + cnt + '</span></div>' + wxHead(S.week, d) + '</div>';
   });
   // events
   h += '<div class="name" style="min-height:30px"><span class="small muted" style="font-weight:600">Events</span></div>';
@@ -1413,6 +1444,7 @@ function drawTimesheets(ws, we) {
         if (s && x.outAt && H.absStr(x.outAt) < H.shiftRange(s)[1] - (+st.lateGrace || 0)) fl.push('<span class="pill warn">Left early</span>');
         if (!s) fl.push('<span class="pill info">Not scheduled</span>');
         if (x.edited) fl.push('<span class="pill neutral">Edited</span>');
+        geoPills(x, fl);
       }
       flagsAll += fl.length;
       h += '<tr><td>' + H.prettyD(x ? x.date : s.date, true) + '</td><td class="muted">' + (s ? H.range12(s.start, s.end) : '—') + '</td><td>' + (x ? H.fmt12(x.inAt.slice(11)) : '—') + '</td><td>' + (x && x.outAt ? H.fmt12(x.outAt.slice(11)) + (x.outAt.slice(0, 10) !== x.date ? ' +1' : '') : '—') + '</td><td>' + (x ? (+x.breakMin || 0) + 'm' : '') + '</td><td><b>' + (x ? H.hrs(punchHours(x)) : '0') + '</b></td><td>' + fl.join(' ') + '</td>' +
@@ -1622,7 +1654,7 @@ function storeDlg(x) {
   function chk(k, l) { return '<label class="chk"><input type="checkbox" data-s="' + k + '"' + (st[k] ? ' checked' : '') + '> ' + l + '</label>'; }
   var body = '<div class="g2"><label class="f">Store name<input class="inp" name="name" value="' + esc(x ? x.name : '') + '"></label><label class="f">Address<input class="inp" name="address" value="' + esc(x ? x.address : '') + '"></label></div>' +
     '<h3>Labor</h3><div class="g3">' + num('laborTarget', 'Labor target %') + num('otMult', 'OT pay ×', 0.1) + '<label class="f">Week starts on<select class="inp" data-s="weekStart">' + H.DOWL.map(function (d, i) { return '<option value="' + i + '"' + (+st.weekStart === i ? ' selected' : '') + '>' + d + '</option>'; }).join('') + '</select></label>' + num('noticeDays', 'Time-off notice (days)') + '</div>' +
-    storeRuleFields(st) +
+    storeRuleFields(st) + geoStoreFields(st, x) +
     '<h3>Schedule screen</h3><div class="g3">' + num('openHour', 'Day view starts (hour 0–23)') + num('closeHour', 'Day view ends (hour 1–30)') + '</div>' +
     '<h3>Time clock</h3><div class="g3">' + num('clockEarly', 'Can clock in early (min)') + num('lateGrace', 'Late after (min)') + '</div>' + chk('clockWithoutShift', 'Allow clock-in without a scheduled shift') +
     '<h3>Employees</h3>' + chk('teamView', 'Employees can see everyone\'s shifts (not just their own)') +
@@ -1898,6 +1930,7 @@ function renderScheduleMobile() {
     h += '<div class="mstat"><span><b>' + (dl.count || 0) + '</b> working</span>·<span><b>' + H.hrs(dl.hours) + '</b> hrs</span>' + (m.showWage && sales ? '·' + pctPill(dl.cost, sales, w.store.settings, true) : '') +
       (forecastLine(w, d) ? '·<span title="Suggested from the sales forecast">' + forecastLine(w, d) + '</span>' : '') +
       (warns.length ? '<button class="pill warn" id="warnBtn" style="border:0;cursor:pointer">⚠ ' + warns.length + '</button>' : '') + '</div>';
+    h += wxDayLine(w, d);
     if (w.checklistStatus && w.checklistStatus[d]) h += '<div class="mstat" style="margin-top:-4px">Checklists: ' + w.checklistStatus[d].map(function (c) { return '<span class="pill ' + (c.done === c.total ? 'good' : c.done ? 'warn' : 'neutral') + '">' + esc(c.name) + ' ' + c.done + '/' + c.total + '</span>'; }).join(' ') + '</div>';
     (m.ev[d] || []).forEach(function (e) { h += '<div class="ev" style="margin-bottom:8px" data-ev="' + e.id + '">' + esc(e.title) + '</div>'; });
     h += list.length ? '<div class="mlist">' + list.map(function (s) { return mShiftHtml(s, m); }).join('') + '</div>' : '<div class="card empty">Nobody scheduled' + (canEdit ? '. Tap + to add a shift, or copy another day from ⋯.' : '.') + '</div>';
@@ -2032,7 +2065,7 @@ function drawEmpSchedule(w) {
       '<div class="seg"><button data-ev2="day" class="' + (isDay ? 'on' : '') + '">Day</button><button data-ev2="week" class="' + (isDay ? '' : 'on') + '">Week</button></div></div>' +
       (stores.length > 1 ? '<select class="inp" id="eStore" style="margin-bottom:10px">' + stores.map(function (s) { return '<option value="' + s.id + '"' + (s.id === S.storeId ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('') + '</select>' : '');
     if (isDay) {
-      h += dayStrip(w.dates, d, t0, mineDates);
+      h += dayStrip(w.dates, d, t0, mineDates); h += wxDayLine(w, d);
       var mine = w.shifts.filter(function (s) { return s.date === d && s.empId === me; });
       var myOff = w.timeOff.filter(function (t) { return t.empId === me && d >= t.startDate && d <= t.endDate; });
       (w.events || []).filter(function (e) { return e.date === d; }).forEach(function (e) { h += '<div class="ev" style="margin-bottom:8px">' + esc(e.title) + '</div>'; });
@@ -2580,6 +2613,8 @@ var HELP = [
   ['How do trades work?', 'The employee picks a coworker. The coworker says yes first, then a manager or the owner approves, and both schedules update by themselves. You can see "Waiting for coworker" while it\'s pending.'],
   ['Overtime and 4×10 / 3×12 schedules', 'Pick the rules per store in Settings → Stores. A position or a person can use different rules. For a California alternative workweek, record the vote in Settings → Work rules first.'],
   ['Turning features off', 'Settings → Features. Anything you turn off disappears for everyone.'],
+  ['How does clock-in checking work?', 'When someone clocks in on their phone, the app checks they are near the store (location), on their usual phone, and takes a quick selfie. If the store uses the changing code screen, they also scan it. Anything that does not check out is flagged; you see it in Timesheets → Review clock-ins. Set it up in Settings → Stores → Clock-in checks.'],
+  ['Weather on the schedule', 'Each day shows the forecast for the next 7 days and typical weather after that. Set your store location and your hot-day rule in Settings → Stores. If a scheduled day turns hot and you are short-staffed, you get an email.'],
   ['New device asks for a code', 'For your safety, owners get a 6-digit code by email the first time they log in on a new phone or computer. After that the device is remembered.'],
   ['Forgot PIN', 'Employees: ask the owner or a manager to use Send login in Team. Owners: contact support.'],
   ['Paying', 'Settings → Subscription. Card payments go through Stripe. If a payment is late there are 7 grace days, then the app becomes view-only for owners and managers until it\'s paid. Employees can still see the schedule and clock in.']
@@ -2926,6 +2961,292 @@ function crErr(el) {
   var d = S.cr.data, nm = {}; d.businesses.forEach(function (b) { nm[b.id] = b.name; });
   el.innerHTML = '<div class="g2"><div class="card col"><h2>Errors</h2>' + (d.errors.length ? d.errors.map(function (e) { return '<div class="small" style="border-bottom:1px solid var(--line);padding:5px 0"><b>' + esc(nm[e.bizId] || e.bizId || '—') + '</b> · ' + esc(e.action) + ' <span class="faint">' + esc(e.at) + '</span><div style="color:var(--bad)">' + esc(e.error) + '</div></div>'; }).join('') : '<div class="muted small">No errors. 🎉</div>') + '</div>' +
     '<div class="card col"><h2>What you did</h2>' + (d.log.length ? d.log.map(function (l) { return '<div class="small" style="border-bottom:1px solid var(--line);padding:5px 0"><b>' + esc(l.action) + '</b> · ' + esc(l.detail) + ' <span class="faint">' + esc(l.at) + '</span></div>'; }).join('') : '<div class="muted small">Nothing yet.</div>') + '</div></div>';
+}
+
+// =====================================================================
+// WEATHER on the schedule + TRUSTED CLOCK-IN (location, own phone, selfie, store code)
+// =====================================================================
+(function () {
+  var css = '.wx{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;line-height:1.3}.wx b{color:var(--ink);font-weight:600}' +
+    '.wx .al{color:var(--bad);font-weight:700}.wx.typ{font-style:italic}.wx .hot{background:var(--warn-bg);color:var(--warn);border-radius:6px;padding:1px 6px;font-weight:700}' +
+    '.wx .hot.ok{background:var(--good-bg);color:var(--good)}.mwx{margin:-2px 0 10px}.dstrip button small{font-size:11px;line-height:1;height:12px}' +
+    '.ck{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}.ck:last-child{border-bottom:0}.ck .ic{font-size:20px;width:28px;text-align:center}.ck .tx{flex:1;min-width:0}.ck .tx div{font-size:13px;color:var(--muted)}' +
+    '.ck.good .tx div{color:var(--good)}.ck.warn .tx div{color:var(--warn)}.ck.bad .tx div{color:var(--bad)}.selfie{width:56px;height:56px;border-radius:12px;object-fit:cover}' +
+    '.scanbox{position:relative;width:100%;max-width:360px;aspect-ratio:1;margin:0 auto;border-radius:16px;overflow:hidden;background:#000}.scanbox video{width:100%;height:100%;object-fit:cover}' +
+    '.scanbox:after{content:"";position:absolute;inset:18%;border:3px solid rgba(255,255,255,.85);border-radius:14px}' +
+    '.qrs{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;text-align:center;background:var(--bg)}' +
+    '.qrs .code{background:#fff;padding:16px;border-radius:20px;width:min(78vw,62vh);aspect-ratio:1}.qrs .code svg{width:100%;height:100%;display:block}' +
+    '.qrs .bar{width:min(78vw,62vh);height:6px;border-radius:3px;background:var(--surface-3);overflow:hidden}.qrs .bar i{display:block;height:100%;background:var(--accent,#1d6b58);transition:width .25s linear}' +
+    '.rv{border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}.rv .ph{display:flex;gap:8px}.rv .ph img{width:84px;height:84px;border-radius:10px;object-fit:cover;background:var(--surface-3)}';
+  var s = document.createElement('style'); s.textContent = css; document.head.appendChild(s);
+})();
+function lst(v) { return String(v || '').split(',').filter(Boolean); }
+var JSQR_URL = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js', QRGEN_URL = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+
+// ---------------------------------------------------------------- weather on the schedule
+function wxBits(x, compact) {
+  if (!x) return '';
+  var t = x.kind === 'normal' ? 'Typical ' + x.hi + '°' + (x.lo !== '' ? ' / ' + x.lo + '°' : '') : (x.icon || '') + ' <b>' + x.hi + '°</b>' + (x.lo !== '' ? ' / ' + x.lo + '°' : '');
+  var h = '<span title="' + esc(x.kind === 'normal' ? 'Typical weather for this date (30-year average). The real forecast appears 7 days ahead.' : x.text || '') + '">' + t + '</span>';
+  if (x.pop !== '' && x.pop >= 20) h += '<span title="Chance of rain">💧' + x.pop + '%</span>';
+  if (x.alert) h += '<span class="al">⚠ ' + esc(compact ? x.alert.split(',')[0] : x.alert) + '</span>';
+  if (x.hot && x.want) h += '<span class="hot' + (x.short ? '' : ' ok') + '" title="Hot-day rule: ' + x.want + ' people ' + esc(x.window || '') + '">' + (x.short ? '🔥 ' + x.have + '/' + x.want + ' staff' : '🔥 staffed') + '</span>';
+  else if (x.hot) h += '<span class="hot">🔥 Hot day</span>';
+  return h;
+}
+function wxHead(w, d) { var x = w && w.weather && w.weather[d]; return x ? '<div class="wx' + (x.kind === 'normal' ? ' typ' : '') + '">' + wxBits(x, true) + '</div>' : ''; }
+function wxDayLine(w, d) {
+  if (!w || !w.weather) return '';
+  if (w.weather._noLoc) return S.me && S.me.perms.owner ? '<div class="wx mwx">🌤 Set the store location in Settings → Stores to see weather here.</div>' : '';
+  var x = w.weather[d]; if (!x) return '';
+  return '<div class="wx mwx' + (x.kind === 'normal' ? ' typ' : '') + '">' + wxBits(x) + (x.kind === 'fc' && x.text ? '<span>' + esc(x.text) + '</span>' : '') + (x.hot && x.short ? '<span>Hot-day rule wants ' + x.want + ' people ' + esc(x.window) + '</span>' : '') + '</div>';
+}
+(function () {
+  var _ds = dayStrip;
+  dayStrip = function (dates, sel, today, counts) {
+    var h = _ds(dates, sel, today, counts), W = S.week && S.week.weather; if (!W || W._noLoc) return h;
+    dates.forEach(function (x) { var c = W[x]; if (!c) return; var ic = c.kind === 'normal' ? '' : (c.alert ? '⚠' : c.icon || ''); h = h.replace('data-day="' + x + '"', 'data-day="' + x + '" data-wx="1"').replace(new RegExp('(data-day="' + x + '"[^>]*>[^<]*<b>[^<]*</b>)'), '$1<small>' + (ic || c.hi + '°') + '</small>'); });
+    return h;
+  };
+})();
+
+// ---------------------------------------------------------------- store settings: clock-in checks + weather
+function geoStoreFields(st, x) {
+  function num(k, l, step) { return '<label class="f">' + l + '<input class="inp" type="number" step="' + (step || 1) + '" data-s="' + k + '" value="' + (st[k] == null ? '' : st[k]) + '"></label>'; }
+  function chk(k, l) { return '<label class="chk"><input type="checkbox" data-s="' + k + '"' + (st[k] ? ' checked' : '') + '> ' + l + '</label>'; }
+  var has = st.lat !== '' && st.lat != null;
+  setTimeout(function () {
+    var m = $$('.scrim').pop(); if (!m || !$('#geoSet', m)) return;
+    function show() { var la = $('[data-s=lat]', m).value, lo = $('[data-s=lng]', m).value; $('#geoNow', m).innerHTML = la ? '📍 Saved: <a href="https://maps.google.com/?q=' + la + ',' + lo + '" target="_blank" rel="noopener">see on map</a>' : 'No location yet. Stand inside the store and tap the button.'; }
+    $('#geoSet', m).onclick = function () {
+      var b = this; b.disabled = true; b.textContent = 'Finding location…';
+      getPos(15000).then(function (p) { $('[data-s=lat]', m).value = p.lat.toFixed(6); $('[data-s=lng]', m).value = p.lng.toFixed(6); show(); toast('Location found (±' + H.fmtDist(p.acc) + '). Tap Save to keep it.'); },
+        function (e) { toast(e.message, 'bad'); }).then(function () { b.disabled = false; b.textContent = 'Use my current location'; });
+    };
+    $('#geoClr', m).onclick = function () { $('[data-s=lat]', m).value = ''; $('[data-s=lng]', m).value = ''; show(); };
+    if ($('#wxNow', m)) $('#wxNow', m).onclick = function () {
+      var id = x ? x.id : ''; if (!id) return toast('Save the store first, then check the weather', 'bad');
+      run(api('weatherNow', { storeId: id }), function (r) { return 'Weather updated: ' + r.days + ' days' + (r.alerts ? ', ' + r.alerts + ' alert(s)' : '') + '. Typical weather: ' + r.normals; }).then(function () { S.week = null; });
+    };
+    show();
+  }, 0);
+  return '<h3>Clock-in checks</h3>' +
+    '<input type="hidden" data-s="lat" value="' + esc(st.lat || '') + '"><input type="hidden" data-s="lng" value="' + esc(st.lng || '') + '">' +
+    '<div class="row" style="flex-wrap:wrap"><button type="button" class="btn" id="geoSet">Use my current location</button><button type="button" class="btn ghost sm" id="geoClr">Clear</button><span class="small muted" id="geoNow"></span></div>' +
+    '<p class="small muted" style="margin:0">Stand inside the store when you tap it. Used to check clock-ins and to show the weather.</p>' +
+    '<div class="g3">' + num('geoRadius', 'Allowed distance (meters)') +
+    '<label class="f">If a check fails<select class="inp" data-s="geoMode">' + [['flag', 'Let them clock in, flag it for review'], ['block', 'Don\'t let them clock in'], ['off', 'Don\'t check location']].map(function (o) { return '<option value="' + o[0] + '"' + ((st.geoMode || 'flag') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></label>' +
+    num('photoDays', 'Keep clock-in photos (days)') + '</div>' +
+    chk('selfie', 'Take a quick selfie at clock-in') + chk('qrMode', 'Require scanning the changing code on a store screen') + chk('outRemind', 'Remind people who forget to clock out (15 min after shift)') +
+    '<h3>Weather & busy days</h3><p class="small muted" style="margin:0">Real forecast 7 days ahead, typical weather after that. On hot days the schedule warns you when you have fewer people than you want.</p>' +
+    '<div class="g2">' + num('hotTemp', 'Hot day starts at (°F, 0 = off)') + num('hotPeople', 'People you want on hot days') +
+    '<label class="f">Busy from<input class="inp" type="time" data-s="hotFrom" value="' + esc(st.hotFrom || '12:00') + '"></label><label class="f">Busy until<input class="inp" type="time" data-s="hotTo" value="' + esc(st.hotTo || '18:00') + '"></label></div>' +
+    (feat('weather') ? '<div><button type="button" class="btn sm" id="wxNow">Check weather now</button></div>' : '<div class="small muted">Weather is part of the Pro plan.</div>');
+}
+
+// ---------------------------------------------------------------- location, photo, code scanning
+function getPos(timeout) {
+  return new Promise(function (res, rej) {
+    if (!navigator.geolocation) return rej(new Error('This phone can\'t share its location.'));
+    navigator.geolocation.getCurrentPosition(function (p) { res({ lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy || 0) }); }, function (e) {
+      rej(new Error(e.code === 1 ? 'Location is turned off for this app. Allow location in your phone settings, then try again.' : 'Could not find your location. Step near a window and try again.'));
+    }, { enableHighAccuracy: true, timeout: timeout || 12000, maximumAge: 0 });
+  });
+}
+function shrinkPhoto(file, max) {
+  return new Promise(function (res, rej) {
+    var rd = new FileReader(); rd.onerror = function () { rej(new Error('Could not read the photo')); };
+    rd.onload = function () {
+      var im = new Image(); im.onerror = function () { rej(new Error('Could not read the photo')); };
+      im.onload = function () {
+        var s = Math.min(1, (max || 240) / Math.max(im.width, im.height)), c = document.createElement('canvas'); c.width = Math.round(im.width * s); c.height = Math.round(im.height * s);
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); res(c.toDataURL('image/jpeg', 0.62));
+      };
+      im.src = rd.result;
+    };
+    rd.readAsDataURL(file);
+  });
+}
+function pickPhoto(facing) {
+  return new Promise(function (res) {
+    var i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.setAttribute('capture', facing || 'user'); i.style.display = 'none';
+    i.onchange = function () { res(i.files && i.files[0] || null); i.remove(); }; document.body.appendChild(i); i.click();
+  });
+}
+function decodeQR(source, w, h) {
+  var c = document.createElement('canvas'); c.width = w; c.height = h; var g = c.getContext('2d'); g.drawImage(source, 0, 0, w, h);
+  var r = window.jsQR ? jsQR(g.getImageData(0, 0, w, h).data, w, h) : null; return r ? r.data : '';
+}
+function scanCode() {
+  return new Promise(function (res) {
+    var stream = null, done = false, timer = null;
+    var m = modal({ title: 'Scan the store code', noFocus: true, body: '<p class="small muted" style="margin:0">Point your camera at the code on the store screen.</p><div class="scanbox"><video playsinline muted autoplay></video></div><div id="scMsg" class="small muted" style="text-align:center"></div>',
+      foot: '<button class="btn" data-c>Cancel</button><button class="btn" data-ph>Take a photo instead</button>' });
+    var v = $('video', m.el);
+    function finish(code) { if (done) return; done = true; clearInterval(timer); try { stream && stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { } m.close(); res(code || ''); }
+    $('[data-c]', m.el).onclick = function () { finish(''); };
+    $('[data-ph]', m.el).onclick = function () {
+      pickPhoto('environment').then(function (f) {
+        if (!f) return; var im = new Image(), u = URL.createObjectURL(f);
+        im.onload = function () { var s = Math.min(1, 900 / Math.max(im.width, im.height)), code = decodeQR(im, Math.round(im.width * s), Math.round(im.height * s)); URL.revokeObjectURL(u); if (/^SBQ1:/.test(code)) finish(code); else $('#scMsg', m.el).textContent = 'No store code found in that photo. Try again closer.'; };
+        im.src = u;
+      });
+    };
+    var detector = null; try { if ('BarcodeDetector' in window) detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { detector = null; }
+    var libs = detector ? Promise.resolve() : loadScript(JSQR_URL);
+    libs.then(function () {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { $('#scMsg', m.el).textContent = 'Live camera is not available. Use "Take a photo instead".'; return; }
+      return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false }).then(function (s) {
+        stream = s; if (done) return finish(''); v.srcObject = s; v.play().catch(function () { });
+        timer = setInterval(function () {
+          if (!v.videoWidth) return;
+          if (detector) detector.detect(v).then(function (r) { var c = r && r[0] && r[0].rawValue; if (/^SBQ1:/.test(c || '')) finish(c); }).catch(function () { });
+          else { var sc = Math.min(1, 640 / v.videoWidth), c = decodeQR(v, Math.round(v.videoWidth * sc), Math.round(v.videoHeight * sc)); if (/^SBQ1:/.test(c)) finish(c); }
+        }, 250);
+      });
+    }).catch(function () { $('#scMsg', m.el).textContent = 'Camera is blocked. Allow the camera, or use "Take a photo instead".'; });
+  });
+}
+
+// ---------------------------------------------------------------- the clock-in screen on the employee's phone
+function storeOf(id) { var l = (S.home && S.home.stores) || (S.me && S.me.stores) || []; return l.filter(function (s) { return s.id === id; })[0] || l[0] || null; }
+function clockFlow(act, storeId, again) {
+  var st = storeOf(storeId), ss = st ? st.settings : {}, isIn = act === 'in';
+  var needGeo = ss.geoMode !== 'off' && ss.lat !== '' && ss.lat != null, needQr = !!ss.qrMode, needPhoto = isIn && !!ss.selfie;
+  if (!needGeo && !needQr && !needPhoto) {
+    var go = function () { run(api('clock', { storeId: storeId, action: act, devId: devId() }), function (r) { return r.msg; }).then(again); };
+    return isIn ? go() : confirmBox('Clock out', 'Clock out now?', 'Clock out').then(function (ok) { if (ok) go(); });
+  }
+  var state = { geo: null, geoErr: '', photo: '', qr: '' };
+  var m = modal({ title: isIn ? 'Clock in' : 'Clock out', noFocus: true,
+    body: (needGeo ? '<div class="ck" id="ckGeo"><span class="ic">📍</span><span class="tx">Location<div>Checking…</div></span><button class="btn sm" data-retry style="display:none">Try again</button></div>' : '') +
+      (needQr ? '<div class="ck" id="ckQr"><span class="ic">🔳</span><span class="tx">Store code<div>Scan the code on the store screen</div></span><button class="btn sm pri" data-scan>Scan</button></div>' : '') +
+      (needPhoto ? '<div class="ck" id="ckPh"><span class="ic">📷</span><span class="tx">Quick selfie<div>Shows your manager it\'s you</div></span><button class="btn sm pri" data-photo>Take photo</button></div>' : '') +
+      '<p class="small muted" style="margin:6px 0 0">' + (ss.geoMode === 'block' ? 'You must be at the store to clock ' + (isIn ? 'in' : 'out') + '.' : 'If something doesn\'t check out, you can still clock ' + (isIn ? 'in' : 'out') + ' and your manager will review it.') + '</p>',
+    foot: '<button class="btn" data-c>Cancel</button><button class="btn pri" data-go>' + (isIn ? 'Clock in' : 'Clock out') + '</button>' });
+  function line(id, cls, text) { var el = $('#' + id, m.el); if (!el) return; el.className = 'ck ' + cls; $('.tx div', el).innerHTML = text; }
+  function locate() {
+    line('ckGeo', '', 'Checking…'); $('[data-retry]', m.el).style.display = 'none';
+    getPos(12000).then(function (p) {
+      state.geo = p; state.geoErr = '';
+      var d = H.geoDist(+ss.lat, +ss.lng, p.lat, p.lng), rad = +ss.geoRadius || 100;
+      if (d <= rad) line('ckGeo', 'good', '✓ At the store (' + H.fmtDist(d) + ' away)');
+      else if (d - Math.min(p.acc, 150) <= rad) line('ckGeo', 'warn', 'Close, but not sure (' + H.fmtDist(d) + ' away, ±' + H.fmtDist(p.acc) + ')');
+      else line('ckGeo', 'bad', 'About ' + H.fmtDist(d) + ' from the store');
+      if (d > rad) $('[data-retry]', m.el).style.display = '';
+    }, function (e) { state.geo = null; state.geoErr = e.message; line('ckGeo', 'bad', esc(e.message)); $('[data-retry]', m.el).style.display = ''; });
+  }
+  if (needGeo) { locate(); $('[data-retry]', m.el).onclick = locate; }
+  if (needQr) $('[data-scan]', m.el).onclick = function () { scanCode().then(function (c) { if (c) { state.qr = c; line('ckQr', 'good', '✓ Scanned'); $('[data-scan]', m.el).textContent = 'Scan again'; $('[data-scan]', m.el).classList.remove('pri'); } }); };
+  if (needPhoto) $('[data-photo]', m.el).onclick = function () {
+    pickPhoto('user').then(function (f) { if (!f) return; return shrinkPhoto(f, 240).then(function (d) {
+      state.photo = d; var el = $('#ckPh', m.el); $('.ic', el).innerHTML = '<img class="selfie" src="' + d + '" alt="">'; line('ckPh', 'good', '✓ Photo ready'); $('[data-photo]', m.el).textContent = 'Retake'; $('[data-photo]', m.el).classList.remove('pri');
+    }); }).catch(function (e) { toast(e.message, 'bad'); });
+  };
+  $('[data-c]', m.el).onclick = m.close;
+  $('[data-go]', m.el).onclick = function () {
+    if (needPhoto && !state.photo) return toast('Take a quick selfie first', 'bad');
+    var b = this; b.disabled = true; b.textContent = 'Saving…';
+    api('clock', { storeId: storeId, action: act, devId: devId(), geo: state.geo, photo: state.photo, qr: state.qr }).then(function (r) {
+      m.close(); toast(r.msg); if (r.flags && r.flags.length) setTimeout(function () { toast('Your manager will review this: ' + r.flags.join(', '), 'warn'); }, 600);
+      again && again();
+    }, function (e) { b.disabled = false; b.textContent = isIn ? 'Clock in' : 'Clock out'; toast(e.message, 'bad'); });
+  };
+}
+clockWire = function (main, again) {
+  $$('[data-clk]', main).forEach(function (b) {
+    b.onclick = function () {
+      var act = b.dataset.clk, sid = b.dataset.store || (S.home && S.home.openPunch && S.home.openPunch.storeId) || '';
+      if (act === 'in' || act === 'out') return clockFlow(act, sid, again);
+      run(api('clock', { storeId: sid, action: act }), function (r) { return r.msg; }).then(again);
+    };
+  });
+};
+
+// ---------------------------------------------------------------- store screen with the changing code
+function qrScreenStart() {
+  var st = curStore();
+  confirmBox('Clock-in code screen', 'This device will show a code for <b>' + esc(st.name) + '</b> that changes every 20 seconds. Employees scan it with their own phone to clock in. A photo of the code stops working within a minute.<br><br>You will be logged out on this device.', 'Start').then(function (ok) {
+    if (!ok) return;
+    run(api('qrScreen', { storeId: st.id })).then(function (r) { store('sb_qrscreen', JSON.stringify(r)); try { api('logout'); } catch (e) { } store('sb_token', null); S.token = null; showQrScreen(r); });
+  });
+}
+var qrTimer = null;
+function showQrScreen(q) {
+  clearInterval(qrTimer);
+  $('#app').innerHTML = '<div class="qrs"><div>' + brand() + '</div><h1 style="margin:0">Clock in here</h1><div class="muted" style="font-weight:600">' + esc(q.storeName) + ' · open the app and tap Clock in, then Scan</div>' +
+    '<div class="code" id="qrc"></div><div class="bar"><i id="qrb"></i></div><div class="clock t" id="qrt" style="font-size:22px;font-weight:700"></div><button class="btn ghost sm" id="qrx">Exit</button></div>';
+  $('#qrx').onclick = function () { confirmBox('Exit the code screen?', 'A manager will need to log in on this device to start it again.', 'Exit').then(function (ok) { if (ok) { clearInterval(qrTimer); store('sb_qrscreen', null); showLogin(); } }); };
+  var last = -1;
+  function tick() {
+    var nowMs = Date.now(), slot = Math.floor(nowMs / q.slotMs), left = q.slotMs - nowMs % q.slotMs;
+    $('#qrb').style.width = (left / q.slotMs * 100) + '%';
+    $('#qrt').textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (slot === last || !window.qrcode) return; last = slot;
+    var text = 'SBQ1:' + q.storeId + ':' + slot + ':' + H.hmac(q.secret, q.storeId + '.' + slot).slice(0, 16);
+    var g = qrcode(0, 'M'); g.addData(text); g.make(); $('#qrc').innerHTML = g.createSvgTag({ cellSize: 8, margin: 2, scalable: true });
+  }
+  loadScript(QRGEN_URL).then(function () { tick(); qrTimer = setInterval(tick, 250); }, function () { $('#qrc').innerHTML = '<div style="color:#000;padding:20px">Could not load the code maker. Check the internet and reload.</div>'; });
+}
+(function () {
+  var _boot = boot;
+  boot = function () { var q = parseJSON(store('sb_qrscreen')); if (q && q.secret) return showQrScreen(q); return _boot.apply(this, arguments); };
+  var _rs = renderSettings;
+  renderSettings = function () {
+    _rs.apply(this, arguments);
+    var k = $('#kioskBtn'); if (k && !$('#qrBtn')) { k.insertAdjacentHTML('afterend', '<button class="btn" id="qrBtn" style="white-space:normal;height:auto;min-height:40px;text-align:left;margin-top:8px">Show the changing clock-in code on this device</button><div class="small muted" style="margin-top:6px">For stores that turned on "Require scanning the changing code" in Stores → Clock-in checks.</div>'); $('#qrBtn').onclick = qrScreenStart; }
+  };
+})();
+
+// ---------------------------------------------------------------- timesheets: badges + review flagged clock-ins
+function geoPills(x, fl) {
+  var f = lst(x.inFlags).concat(lst(x.outFlags));
+  if (x.review === 'open') fl.push('<span class="pill warn" title="' + esc(f.join(', ')) + '">⚠ Review</span>');
+  else if (x.review === 'ok') fl.push('<span class="pill good" title="Approved by ' + esc(x.reviewBy || '') + (x.reviewNote ? ': ' + esc(x.reviewNote) : '') + '">✓ Reviewed</span>');
+  else if (x.via === 'phone' && !f.length) fl.push('<span class="pill good" title="Location, phone and photo checks passed">✓ Checked</span>');
+  else if (x.via === 'kiosk') fl.push('<span class="pill neutral">Store tablet</span>');
+}
+(function () {
+  var _dt = drawTimesheets;
+  drawTimesheets = function () {
+    _dt.apply(this, arguments);
+    var T = S.ts, csv = $('#csvBtn'); if (!T || !csv || !S.me.perms.timesheets) return;
+    csv.insertAdjacentHTML('beforebegin', '<button class="btn' + (T.reviewOpen ? ' pri' : '') + '" id="revBtn">' + (T.reviewOpen ? '⚠ Review clock-ins (' + T.reviewOpen + ')' : 'Review clock-ins') + '</button>');
+    $('#revBtn').onclick = reviewDlg;
+  };
+})();
+function reviewDlg() {
+  var m = modal({ title: 'Clock-ins to review', wide: true, noFocus: true, body: '<div class="muted">Loading…</div>', foot: '<button class="btn" data-c>Close</button>' });
+  $('[data-c]', m.el).onclick = function () { m.close(); renderTimesheets(); };
+  function load() {
+    api('punchReview', { storeId: S.storeId }).then(function (r) {
+      var L = r.punches;
+      if (!L.length) { $('.modal-b', m.el).innerHTML = '<div class="empty">Nothing to review. 🎉</div>'; return; }
+      $('.modal-b', m.el).innerHTML = '<p class="small muted" style="margin:0">These clock-ins didn\'t pass every check. Look at the photo and where they were, then approve or fix the time.</p>' + L.map(function (p) {
+        function side(w, label) {
+          var lat = p[w + 'Lat'], fl = p[w + 'FlagText'] || [];
+          if (!p[w + 'At'] && w === 'out') return '';
+          return '<div class="small"><b>' + label + ' ' + (p[w + 'At'] ? esc(H.prettyD(p[w + 'At'].slice(0, 10), true) + ' ' + H.fmt12(p[w + 'At'].slice(11))) : '') + '</b>' +
+            (fl.length ? ' · <span style="color:var(--warn);font-weight:600">' + esc(fl.join(', ')) + '</span>' : ' · <span style="color:var(--good)">checks passed</span>') +
+            (p[w + 'Dist'] !== '' && p[w + 'Dist'] != null ? ' · ' + H.fmtDist(p[w + 'Dist']) + ' from store' + (p[w + 'Acc'] ? ' (±' + H.fmtDist(p[w + 'Acc']) + ')' : '') : '') +
+            (lat ? ' · <a href="https://maps.google.com/?q=' + lat + ',' + p[w + 'Lng'] + '" target="_blank" rel="noopener">map</a>' : '') + '</div>';
+        }
+        return '<div class="rv" data-pid="' + p.id + '"><div class="row" style="justify-content:space-between"><b>' + esc(p.name) + '</b><span class="small muted">' + esc(H.prettyD(p.date, true)) + '</span></div>' +
+          side('in', 'In') + side('out', 'Out') +
+          '<div class="ph">' + (p.inPhoto ? '<img data-ph="in" alt="Clock-in photo">' : '') + (p.outPhoto ? '<img data-ph="out" alt="Clock-out photo">' : '') + '</div>' +
+          '<div class="row" style="flex-wrap:wrap"><button class="btn sm pri" data-ok>Approve</button>' + (lst(p.inFlags).indexOf('newdev') >= 0 ? '<button class="btn sm" data-okp>Approve & use this phone from now on</button>' : '') + '<button class="btn sm" data-edit>Fix time</button><button class="btn sm danger" data-del>Delete</button></div></div>';
+      }).join('');
+      $$('.rv', m.el).forEach(function (el) {
+        var p = L.filter(function (x) { return x.id === el.dataset.pid; })[0];
+        $$('[data-ph]', el).forEach(function (img) { api('punchPhoto', { id: p.id, which: img.dataset.ph }).then(function (r) { if (r.data) img.src = r.data; else img.replaceWith(Object.assign(document.createElement('span'), { className: 'small muted', textContent: r.error || 'No photo' })); }); });
+        $('[data-ok]', el).onclick = function () { run(api('reviewPunch', { id: p.id }), 'Approved').then(load); };
+        if ($('[data-okp]', el)) $('[data-okp]', el).onclick = function () { run(api('reviewPunch', { id: p.id, makePhone: true }), 'Approved · new phone saved').then(load); };
+        $('[data-edit]', el).onclick = function () { m.close(); if (!S.ts) S.ts = { employees: [{ id: p.empId, name: p.name }] }; punchDlg(p); };
+        $('[data-del]', el).onclick = function () { confirmBox('Delete this clock-in?', esc(p.name) + ' · ' + esc(H.prettyD(p.date, true)), 'Delete', true).then(function (ok) { if (ok) run(api('deletePunch', { id: p.id }), 'Deleted').then(load); }); };
+      });
+    }, function (e) { $('.modal-b', m.el).innerHTML = '<div class="pubbar" style="background:var(--bad-bg);color:var(--bad)">' + esc(e.message) + '</div>'; });
+  }
+  load();
 }
 
 // ===== Installed-app (PWA) helpers: offline shell, install button, iPhone tips =====
